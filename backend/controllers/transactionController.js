@@ -1,6 +1,51 @@
-import Transaction from "../models/TransactionModel.js";
-import User from "../models/UserSchema.js";
+import fs from 'fs/promises';
+import path from 'path';
 import moment from "moment";
+import { v4 as uuidv4 } from 'uuid';
+
+// Paths to data files
+const USERS_FILE = path.join(process.cwd(), 'data', 'users.json');
+const TRANSACTIONS_FILE = path.join(process.cwd(), 'data', 'transactions.json');
+
+// Helper functions to read and write files
+const readFile = async (filePath) => {
+  try {
+    // Create data directory if it doesn't exist
+    const dataDir = path.join(process.cwd(), 'data');
+    await fs.mkdir(dataDir, { recursive: true });
+    
+    const data = await fs.readFile(filePath, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.message.includes('Unexpected end of JSON input')) {
+      await fs.writeFile(filePath, JSON.stringify([]));
+      return [];
+    }
+    throw error;
+  }
+};
+
+const writeFile = async (filePath, data) => {
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+};
+
+// Read users from file
+const readUsers = async () => readFile(USERS_FILE);
+
+// Write users to file
+const writeUsers = async (users) => writeFile(USERS_FILE, users);
+
+// Read transactions from file
+const readTransactions = async () => readFile(TRANSACTIONS_FILE);
+
+// Write transactions to file
+const writeTransactions = async (transactions) => writeFile(TRANSACTIONS_FILE, transactions);
+
+// Find user by ID
+const findUserById = async (userId) => {
+  const users = await readUsers();
+  return users.find(user => user._id === userId);
+};
 
 export const addTransactionController = async (req, res) => {
   try {
@@ -13,8 +58,6 @@ export const addTransactionController = async (req, res) => {
       userId,
       transactionType,
     } = req.body;
-
-    // console.log(title, amount, description, date, category, userId, transactionType);
 
     if (
       !title ||
@@ -30,7 +73,8 @@ export const addTransactionController = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
+    // Get user from file
+    const user = await findUserById(userId);
 
     if (!user) {
       return res.status(400).json({
@@ -39,19 +83,40 @@ export const addTransactionController = async (req, res) => {
       });
     }
 
-    let newTransaction = await Transaction.create({
-      title: title,
-      amount: amount,
-      category: category,
-      description: description,
-      date: date,
+    // Create new transaction
+    const newTransaction = {
+      _id: uuidv4(),
+      title,
+      amount,
+      category,
+      description,
+      date,
       user: userId,
-      transactionType: transactionType,
-    });
+      transactionType,
+      createdAt: new Date().toISOString()
+    };
 
-    user.transactions.push(newTransaction);
+    // Read existing transactions
+    const transactions = await readTransactions();
+    
+    // Add new transaction
+    transactions.push(newTransaction);
+    
+    // Save to transactions file
+    await writeTransactions(transactions);
 
-    user.save();
+    // Update user's transactions array
+    const users = await readUsers();
+    const userIndex = users.findIndex(u => u._id === userId);
+    
+    if (!users[userIndex].transactions) {
+      users[userIndex].transactions = [];
+    }
+    
+    users[userIndex].transactions.push(newTransaction._id);
+    
+    // Save updated users
+    await writeUsers(users);
 
     return res.status(200).json({
       success: true,
@@ -69,9 +134,8 @@ export const getAllTransactionController = async (req, res) => {
   try {
     const { userId, type, frequency, startDate, endDate } = req.body;
 
-    console.log(userId, type, frequency, startDate, endDate);
-
-    const user = await User.findById(userId);
+    // Get user from file
+    const user = await findUserById(userId);
 
     if (!user) {
       return res.status(400).json({
@@ -80,32 +144,29 @@ export const getAllTransactionController = async (req, res) => {
       });
     }
 
-    // Create a query object with the user and type conditions
-    const query = {
-      user: userId,
-    };
+    // Read all transactions
+    const allTransactions = await readTransactions();
+    
+    // Filter transactions based on user ID
+    let transactions = allTransactions.filter(t => t.user === userId);
 
+    // Filter by transaction type if specified
     if (type !== 'all') {
-      query.transactionType = type;
+      transactions = transactions.filter(t => t.transactionType === type);
     }
 
-    // Add date conditions based on 'frequency' and 'custom' range
+    // Filter by date based on frequency
     if (frequency !== 'custom') {
-      query.date = {
-        $gt: moment().subtract(Number(frequency), "days").toDate()
-      };
+      const cutoffDate = moment().subtract(Number(frequency), "days").toDate();
+      transactions = transactions.filter(t => moment(t.date).toDate() > cutoffDate);
     } else if (startDate && endDate) {
-      query.date = {
-        $gte: moment(startDate).toDate(),
-        $lte: moment(endDate).toDate(),
-      };
+      const startDateTime = moment(startDate).toDate();
+      const endDateTime = moment(endDate).toDate();
+      transactions = transactions.filter(t => {
+        const transactionDate = moment(t.date).toDate();
+        return transactionDate >= startDateTime && transactionDate <= endDateTime;
+      });
     }
-
-    // console.log(query);
-
-    const transactions = await Transaction.find(query);
-
-    // console.log(transactions);
 
     return res.status(200).json({
       success: true,
@@ -119,15 +180,13 @@ export const getAllTransactionController = async (req, res) => {
   }
 };
 
-
 export const deleteTransactionController = async (req, res) => {
   try {
     const transactionId = req.params.id;
     const userId = req.body.userId;
 
-    // console.log(transactionId, userId);
-
-    const user = await User.findById(userId);
+    // Get user from file
+    const user = await findUserById(userId);
 
     if (!user) {
       return res.status(400).json({
@@ -135,26 +194,38 @@ export const deleteTransactionController = async (req, res) => {
         message: "User not found",
       });
     }
-    const transactionElement = await Transaction.findByIdAndDelete(
-      transactionId
-    );
 
-    if (!transactionElement) {
+    // Read transactions
+    const transactions = await readTransactions();
+    
+    // Find transaction index
+    const transactionIndex = transactions.findIndex(t => t._id === transactionId);
+    
+    if (transactionIndex === -1) {
       return res.status(400).json({
         success: false,
-        message: "transaction not found",
+        message: "Transaction not found",
       });
     }
+    
+    // Remove transaction
+    transactions.splice(transactionIndex, 1);
+    
+    // Save updated transactions
+    await writeTransactions(transactions);
 
-    const transactionArr = user.transactions.filter(
-      (transaction) => transaction._id === transactionId
-    );
-
-    user.transactions = transactionArr;
-
-    user.save();
-
-    // await transactionElement.remove();
+    // Update user's transactions array
+    const users = await readUsers();
+    const userIndex = users.findIndex(u => u._id === userId);
+    
+    if (users[userIndex].transactions) {
+      users[userIndex].transactions = users[userIndex].transactions.filter(
+        id => id !== transactionId
+      );
+    }
+    
+    // Save updated users
+    await writeUsers(users);
 
     return res.status(200).json({
       success: true,
@@ -171,52 +242,56 @@ export const deleteTransactionController = async (req, res) => {
 export const updateTransactionController = async (req, res) => {
   try {
     const transactionId = req.params.id;
+    const { title, amount, description, date, category, transactionType } = req.body;
 
-    const { title, amount, description, date, category, transactionType } =
-      req.body;
-
-    console.log(title, amount, description, date, category, transactionType);
-
-    const transactionElement = await Transaction.findById(transactionId);
-
-    if (!transactionElement) {
+    // Read transactions
+    const transactions = await readTransactions();
+    
+    // Find transaction index
+    const transactionIndex = transactions.findIndex(t => t._id === transactionId);
+    
+    if (transactionIndex === -1) {
       return res.status(400).json({
         success: false,
-        message: "transaction not found",
+        message: "Transaction not found",
       });
     }
-
+    
+    // Update transaction properties
     if (title) {
-      transactionElement.title = title;
+      transactions[transactionIndex].title = title;
     }
-
+    
     if (description) {
-      transactionElement.description = description;
+      transactions[transactionIndex].description = description;
     }
-
+    
     if (amount) {
-      transactionElement.amount = amount;
+      transactions[transactionIndex].amount = amount;
     }
-
+    
     if (category) {
-      transactionElement.category = category;
+      transactions[transactionIndex].category = category;
     }
+    
     if (transactionType) {
-      transactionElement.transactionType = transactionType;
+      transactions[transactionIndex].transactionType = transactionType;
     }
-
+    
     if (date) {
-      transactionElement.date = date;
+      transactions[transactionIndex].date = date;
     }
-
-    await transactionElement.save();
-
-    // await transactionElement.remove();
+    
+    // Add updated timestamp
+    transactions[transactionIndex].updatedAt = new Date().toISOString();
+    
+    // Save updated transactions
+    await writeTransactions(transactions);
 
     return res.status(200).json({
       success: true,
       message: `Transaction Updated Successfully`,
-      transaction: transactionElement,
+      transaction: transactions[transactionIndex],
     });
   } catch (err) {
     return res.status(401).json({

@@ -1,13 +1,10 @@
 import React from "react";
-// import CardBox from "./CardBox";
 import { Container, Row } from "react-bootstrap";
 import CircularProgressBar from "../../components/CircularProgressBar";
 import LineProgressBar from "../../components/LineProgressBar";
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import CurrencyRupeeIcon from '@mui/icons-material/CurrencyRupee';
-// import MovingIcon from '@mui/icons-material/Moving';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
-
 
 const Analytics = ({ transactions }) => {
   const TotalTransactions = transactions.length;
@@ -23,19 +20,20 @@ const Analytics = ({ transactions }) => {
   let totalExpensePercent =
     (totalExpenseTransactions.length / TotalTransactions) * 100;
 
-  // console.log(totalIncomePercent, totalExpensePercent);
-
-  const totalTurnOver = transactions.reduce(
-    (acc, transaction) => acc + transaction.amount,
-    0
-  );
+  // Calculate total income by parsing amounts to numbers and summing them
   const totalTurnOverIncome = transactions
     .filter((item) => item.transactionType === "credit")
-    .reduce((acc, transaction) => acc + transaction.amount, 0);
+    .reduce((acc, transaction) => acc + parseFloat(transaction.amount || 0), 0);
+    
+  // Calculate total expense by parsing amounts to numbers and summing them
   const totalTurnOverExpense = transactions
     .filter((item) => item.transactionType === "expense")
-    .reduce((acc, transaction) => acc + transaction.amount, 0);
+    .reduce((acc, transaction) => acc + parseFloat(transaction.amount || 0), 0);
 
+  // Calculate total turnover as the sum of income and expense
+  const totalTurnOver = totalTurnOverIncome + totalTurnOverExpense;
+
+  // Calculate percentages based on total turnover
   const TurnOverIncomePercent = (totalTurnOverIncome / totalTurnOver) * 100;
   const TurnOverExpensePercent = (totalTurnOverExpense / totalTurnOver) * 100;
 
@@ -64,8 +62,6 @@ const Analytics = ({ transactions }) => {
     "Transportation": '#1982C4',
     "Other": '#F45B69',
   };
-  
-  
 
   return (
     <>
@@ -87,14 +83,14 @@ const Analytics = ({ transactions }) => {
 
                 <div className="d-flex justify-content-center mt-3">
                   <CircularProgressBar
-                    percentage={totalIncomePercent.toFixed(0)}
+                    percentage={isNaN(totalIncomePercent) ? 0 : totalIncomePercent.toFixed(0)}
                     color="green"
                   />
                 </div>
 
                 <div className="d-flex justify-content-center mt-4 mb-2">
                   <CircularProgressBar
-                    percentage={totalExpensePercent.toFixed(0)}
+                    percentage={isNaN(totalExpensePercent) ? 0 : totalExpensePercent.toFixed(0)}
                     color="red"
                   />
                 </div>
@@ -106,21 +102,25 @@ const Analytics = ({ transactions }) => {
             <div className="card h-100">
               <div className="card-header bg-black text-white ">
                 <span style={{ fontWeight: "bold" }}>Total TurnOver:</span>{" "}
-                {totalTurnOver}
+                {totalTurnOver.toLocaleString()}
               </div>
               <div className="card-body">
-                <h5 className="card-title" style={{color: "green"}}>Income: <ArrowDropUpIcon /> {totalTurnOverIncome} <CurrencyRupeeIcon /></h5>
-                <h5 className="card-title" style={{color: "red"}}>Expense: <ArrowDropDownIcon />{totalTurnOverExpense} <CurrencyRupeeIcon /></h5>
+                <h5 className="card-title" style={{color: "green"}}>
+                  Income: <ArrowDropUpIcon /> {totalTurnOverIncome.toLocaleString()} <CurrencyRupeeIcon />
+                </h5>
+                <h5 className="card-title" style={{color: "red"}}>
+                  Expense: <ArrowDropDownIcon /> {totalTurnOverExpense.toLocaleString()} <CurrencyRupeeIcon />
+                </h5>
                 <div className="d-flex justify-content-center mt-3">
                   <CircularProgressBar
-                    percentage={TurnOverIncomePercent.toFixed(0)}
+                    percentage={isNaN(TurnOverIncomePercent) ? 0 : TurnOverIncomePercent.toFixed(0)}
                     color="green"
                   />
                 </div>
 
                 <div className="d-flex justify-content-center mt-4 mb-4">
                   <CircularProgressBar
-                    percentage={TurnOverExpensePercent.toFixed(0)}
+                    percentage={isNaN(TurnOverExpensePercent) ? 0 : TurnOverExpensePercent.toFixed(0)}
                     color="red"
                   />
                 </div>
@@ -134,21 +134,25 @@ const Analytics = ({ transactions }) => {
                 <span style={{ fontWeight: "bold" }}>Categorywise Income</span>{" "}
               </div>
               <div className="card-body">
-                {categories.map(category => {
-                  const income = transactions.filter(transaction => transaction.transactionType === "credit" && transaction.category === category).reduce((acc, transaction) => acc + transaction.amount, 0)
+                {categories.map((category, index) => {
+                  const income = transactions
+                    .filter(transaction => transaction.transactionType === "credit" && transaction.category === category)
+                    .reduce((acc, transaction) => acc + parseFloat(transaction.amount || 0), 0);
                   
-                  const incomePercent = (income/ totalTurnOver) * 100;
-
- 
+                  // Calculate percentage based on total income
+                  const incomePercent = (income / totalTurnOverIncome) * 100;
 
                   return(
-                    <>
-                    {income > 0 &&
-                      (<LineProgressBar label={category} percentage={incomePercent.toFixed(0)} lineColor={colors[category]} />)
-
-                    }
-                    </>
-                  )
+                    <React.Fragment key={`income-${index}`}>
+                      {income > 0 && (
+                        <LineProgressBar 
+                          label={`${category} (${income.toLocaleString()})`}
+                          percentage={isNaN(incomePercent) ? 0 : incomePercent.toFixed(0)} 
+                          lineColor={colors[category]} 
+                        />
+                      )}
+                    </React.Fragment>
+                  );
                 })}
               </div>
             </div>
@@ -160,20 +164,25 @@ const Analytics = ({ transactions }) => {
                 <span style={{ fontWeight: "bold" }}>Categorywise Expense</span>{" "}
               </div>
               <div className="card-body">
-                {categories.map(category => {
-                  const expenses = transactions.filter(transaction => transaction.transactionType === "expense" && transaction.category === category).reduce((acc, transaction) => acc + transaction.amount, 0)
+                {categories.map((category, index) => {
+                  const expenses = transactions
+                    .filter(transaction => transaction.transactionType === "expense" && transaction.category === category)
+                    .reduce((acc, transaction) => acc + parseFloat(transaction.amount || 0), 0);
                   
-                  const expensePercent = (expenses/ totalTurnOver) * 100;
-
+                  // Calculate percentage based on total expense
+                  const expensePercent = (expenses / totalTurnOverExpense) * 100;
 
                   return(
-                    <>
-                    {expenses > 0 &&
-                      (<LineProgressBar label={category} percentage={expensePercent.toFixed(0)} lineColor={colors[category]}/>)
-
-                    }
-                    </>
-                  )
+                    <React.Fragment key={`expense-${index}`}>
+                      {expenses > 0 && (
+                        <LineProgressBar 
+                          label={`${category} (${expenses.toLocaleString()})`}
+                          percentage={isNaN(expensePercent) ? 0 : expensePercent.toFixed(0)} 
+                          lineColor={colors[category]}
+                        />
+                      )}
+                    </React.Fragment>
+                  );
                 })}
               </div>
             </div>
